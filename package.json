@@ -13,6 +13,6 @@
     "lint:secrets": "bash scripts/check-secrets.sh"
   },
   "devDependencies": {
-    "jsdom": "^26.1.0"
+    "jsdom": "^30.1.3"
   }
 }
