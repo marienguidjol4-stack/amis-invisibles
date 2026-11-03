@@ -1,0 +1,85 @@
+name: CI
+
+# Lancé sur chaque pull request, et appelé par le workflow de déploiement.
+# « pull_request » (et non « pull_request_target ») : une PR venant d'un fork
+# n'a accès à aucun secret.
+on:
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  secrets-scan:
+    name: Détection de secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: bash scripts/check-secrets.sh
+
+  build:
+    name: Build et tests du build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:build
+      # Construction « à blanc » avec des valeurs factices, pour vérifier que le site se génère.
+      - run: node scripts/build.mjs
+        env:
+          SUPABASE_URL: https://ci-placeholder.supabase.co
+          SUPABASE_KEY: sb_publishable_ci_placeholder
+
+  database:
+    name: Base de données (migrations, sécurité, simulation, interface)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGURL: postgresql://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Client PostgreSQL
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+      - name: Rôles Supabase simulés
+        run: psql "$PGURL" -v ON_ERROR_STOP=1 -q -c "create role anon nologin" -c "create role authenticated nologin"
+      - name: Migrations
+        run: DATABASE_URL="$PGURL" bash scripts/migrate.sh
+      - name: Migrations rejouées (doivent être ignorées)
+        run: DATABASE_URL="$PGURL" bash scripts/migrate.sh
+      - name: Tests de sécurité SQL
+        run: psql "$PGURL" -v ON_ERROR_STOP=1 -q -f db/tests/security.sql
+      - name: Simulation de 300 tours
+        run: psql "$PGURL" -v ON_ERROR_STOP=1 -q -f db/tests/simulation.sql
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Test de l'interface sur la vraie base
+        run: npm run test:ui

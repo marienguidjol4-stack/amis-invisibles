@@ -1,0 +1,11 @@
+version: 2
+updates:
+  # Garde les actions GitHub (épinglées par SHA) à jour.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
