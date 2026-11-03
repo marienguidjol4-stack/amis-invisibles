@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { JSDOM, ResourceLoader } from "jsdom";
+import { JSDOM } from "jsdom";
 import { build } from "../scripts/build.mjs";
 
 const PGURL = process.env.PGURL;
@@ -45,16 +45,15 @@ test("parcours complet : tirages, revoir, nouveau tour", { skip, timeout: 180000
   const names = rows.map(r => r.split(":")[0]);
   const codes = Object.fromEntries(rows.map(r => r.split(":")));
 
-  class LocalLoader extends ResourceLoader {
-    fetch(url) {
-      const u = new URL(url);
-      return u.origin === "https://amis.test" ? Promise.resolve(readFileSync(join(dist, u.pathname))) : null;
-    }
-  }
-  const dom = new JSDOM(readFileSync(join(dist, "index.html"), "utf8"), {
-    url: "https://amis.test/", runScripts: "dangerously", resources: new LocalLoader(), pretendToBeVisual: true,
+  // On exécute config.js puis app.js « à la main » dans la fenêtre jsdom : cela ne dépend
+  // d'aucune API de chargement de ressources, qui a changé entre les versions de jsdom.
+  const html = readFileSync(join(dist, "index.html"), "utf8").replace(/<script src="[^"]+"><\/script>/g, "");
+  const dom = new JSDOM(html, {
+    url: "https://amis.test/", runScripts: "outside-only", pretendToBeVisual: true,
     beforeParse(w) { w.fetch = fakeFetch; }
   });
+  dom.window.eval(readFileSync(join(dist, "config.js"), "utf8"));
+  dom.window.eval(readFileSync(join(dist, "app.js"), "utf8"));
   const w = dom.window, d = w.document;
   const text = () => d.getElementById("app").textContent;
   const click = el => el.dispatchEvent(new w.MouseEvent("click", { bubbles: true }));
